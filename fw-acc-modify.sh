@@ -1,72 +1,130 @@
 #!/bin/ash
+#The goal of this script is to update an openwrt-based router's firewall which makes possible from a certain BGP AS
+#to access to the router via SSH
+#
+#It uses busybox's telnet which is not part of official openwrt-releases, therefore a creating a custom firmware is 
+#a prerequisite
+
+#basic checks
+
+which telnet > /dev/null
+RETVAL=$?
+
+if [ $RETVAL -eq 1 ]
+then
+	echo ""
+	echo "Telnet is not installed on this router. Compile a custom firmware and check telnet in busybox's settings!"
+	echo ""
+	exit 2
+fi	
+
+if [ $# -eq 0 ]
+then
+	echo ""
+	echo "Usage: $0 <isp>"
+	echo "Currently ISP options are telekom, digi and vidanet."
+	echo ""
+	exit 1
+fi
+
 
 #defining variables
 
-filename=$1-ipv4-prefixes
-isp=$1
-port=1111
-#BGP AS numbers, check bgp.he.net
-as1=AS5483
-as2=AS20845
-as3=AS43529
+FILENAME=$1-ipv4-prefixes
+ISP=$1
+AS1=AS5483
+AS2=AS20845
+AS3=AS43529
+PORT=1037
+OPENWRT_VER=$(awk -F\' '{print $2}' /etc/openwrt_release | awk 'BEGIN {RS="\n"} FNR==2 {print}')
 
-case $isp in
-	
+#defining functions
+
+fw_proc() {
+	local FW_CONF="${1}"
+	local FW_NAME
+	config_get FW_NAME "${FW_CONF}" name
+	if [ "${FW_NAME}" = "ssh-$ISP" ]
+		then
+            uci -q delete firewall."${FW_CONF}"
+	fi
+}
+
+case $ISP in
 	telekom)
-        { echo "-i or $as1"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $filename
-	;;
-	
+	        { echo "-i or $AS1"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $FILENAME
+            ;;
+
 	digi)
-        { echo "-i or $as2"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $filename
-	;;
+	        { echo "-i or $AS2"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $FILENAME
+    		;;
 	
 	vidanet)
-        { echo "-i or $as3"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $filename
-	;;
+	        { echo "-i or $AS3"; sleep 1; } | telnet whois.ripe.net 43 | awk '/^route:/ { ORS=" " ; print $2 }' > $FILENAME
+    		;;
 
 	*)
-	echo "unknown provider"
-	exit 1
-	;;
+		echo ""
+		echo "Unknown ISP: \"$1\". Options are: telekom, digi or vidanet"
+		echo ""
+		exit 3
+		;;
+
 esac
+	
+if [ -s $FILENAME ]
+then	
 
-if [ -s $filename ]
-then
-
-      ip=`cat $filename`
+	IP_ADD=$(cat $FILENAME)
    
-      #deleting existing isp rules
+	#deleting existing rules
+	fw_proc
+	. /lib/functions.sh
+	config_load firewall
+	config_foreach fw_proc rule
+	uci commit firewall
 
-      fw_proc() {
-         local FW_CONF="${1}"
-         local FW_NAME
-         config_get FW_NAME "${FW_CONF}" name
-         if [ "${FW_NAME}" = "ssh-$isp" ]
-              then uci -q delete firewall."${FW_CONF}"
-         fi
-      }
-      . /lib/functions.sh
-      config_load firewall
-      config_foreach fw_proc rule
-      uci commit firewall
+	case $OPENWRT_VER in
 
-      #'add_list' is for Openwrt v19, older version uses 'set' instead of 'add_lists'
-      #adding isp rules
+	        19*)
+    			rule_name=$(uci add firewall rule)
+    			uci batch <<- EOI
+    			set firewall.$rule_name.src='wan'
+    			set firewall.$rule_name.name='ssh-$ISP'
+    			add_list firewall.$rule_name.src_ip='$IP_ADD'
+    			set firewall.$rule_name.family='ipv4'
+    			set firewall.$rule_name.target='ACCEPT'
+    			add_list firewall.$rule_name.proto='tcp'
+    			set firewall.$rule_name.dest_port='$PORT'
+    			EOI
+    			uci commit firewall
+    			/etc/init.d/firewall restart
+    			exit 0
+    	        ;;
+		
+	        18*)
+    			rule_name=$(uci add firewall rule)
+    			uci batch <<- EOI
+    			set firewall.$rule_name.enabled='1'
+    			set firewall.$rule_name.target='ACCEPT'
+    			set firewall.$rule_name.src='wan'
+    			set firewall.$rule_name.proto='tcp'
+    			set firewall.$rule_name.dest_port='$PORT'
+    			set firewall.$rule_name.name='ssh-$ISP'
+    			set firewall.$rule_name.family='ipv4'
+    			set firewall.$rule_name.src_ip='$IP_ADD'
+    			EOI
+    			uci commit firewall
+    			/etc/init.d/firewall restart
+    			exit 0
+    			;;
 
-      rule_name=$(uci add firewall rule)
-      uci batch << EOI
-      set firewall.$rule_name.enabled='1'
-      set firewall.$rule_name.dest_port='$port'
-      set firewall.$rule_name.src='wan'
-      set firewall.$rule_name.name='ssh-$isp'
-      add_list firewall.$rule_name.src_ip='$ip'
-      set firewall.$rule_name.family='ipv4'
-      set firewall.$rule_name.target='ACCEPT'
-      add_list firewall.$rule_name.proto='tcp'
-EOI
-      uci commit firewall
-
-      exit 0
-else
-      exit 2
+	        *)
+    			echo ""
+    			echo "This is not a known version of Openwrt"
+    			echo ""
+    			exit 4
+    			;;
+	esac
 fi
+
