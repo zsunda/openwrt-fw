@@ -48,7 +48,8 @@ fw_proc() {
 	local FW_NAME
 	config_get FW_NAME "${FW_CONF}" name
 	if [ "${FW_NAME}" = "ssh-$ISP" ]
-		then uci -q delete firewall."${FW_CONF}"
+		then 
+		uci -q delete firewall."${FW_CONF}"
 	fi
 }
 
@@ -71,7 +72,7 @@ case $ISP in
 
 	*)
 		echo
-		echo "Unknown ISP: \"$1\". Options are: telekom, digi or vidanet"
+		echo "Unknown ISP: \"$ISP\". Options are: telekom, digi or vidanet"
 		echo
 		exit 3
 		;;
@@ -137,6 +138,6 @@ then
 	esac
 else
 	echo
-	echo "File "$FILENAME" not exists. Check permission and/or your internet connection!"
+	echo "File "$FILENAME" not exists or empty. Check permission and/or your internet connection!"
 	echo
 fi
