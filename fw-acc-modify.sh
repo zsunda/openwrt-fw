@@ -96,7 +96,7 @@ then
 	#
 	case $OPENWRT_VER in
 
-	        19*)
+	        21*|19*)
 			rule_name=$(uci add firewall rule)
 			uci batch <<- EOI
 			set firewall.$rule_name.src='wan'
